@@ -35,6 +35,7 @@
 #include "stm32f1xx_hal.h"
 #include "dma.h"
 #include "i2c.h"
+#include "iwdg.h"
 #include "rtc.h"
 #include "usart.h"
 #include "gpio.h"
@@ -157,7 +158,7 @@ void sleep(uint32_t delay) {
 		HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 		HAL_ResumeTick();
 	} else {
-		HAL_Delay(delay);
+		HAL_Delay(delay * 1000);
 	}
 }
 
@@ -186,6 +187,7 @@ int main(void)
   MX_I2C2_Init();
   MX_USART2_UART_Init();
   MX_RTC_Init();
+  MX_IWDG_Init();
 
   /* USER CODE BEGIN 2 */
 	/**
@@ -308,7 +310,12 @@ int main(void)
 
 	SSD1306_UpdateScreen();
 
-	HAL_Delay(1000);
+	HAL_Delay(3000);
+
+	/**
+	 * Watch DOG
+	 */
+	HAL_IWDG_Start(&hiwdg);
 
 
 	char buffer[BUFF_LEN] = {};
@@ -392,7 +399,9 @@ int main(void)
 	}
 
 //	printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
+	HAL_IWDG_Refresh(&hiwdg);
 	sleep(MAIN_LOOP_DELAY);
+	HAL_IWDG_Refresh(&hiwdg);
   }
   /* USER CODE END 3 */
 
@@ -409,8 +418,9 @@ void SystemClock_Config(void)
 
     /**Initializes the CPU, AHB and APB busses clocks 
     */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {

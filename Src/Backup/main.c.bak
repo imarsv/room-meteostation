@@ -64,6 +64,10 @@
 
 #define BUFF_LEN		(32)
 
+#define MAIN_LOOP_DELAY   (2)
+#define SHOW_SCREEN_DELAY (5)
+#define HIDE_SCREEN_DELAY (20)
+
 // Converts degrees to radians.
 #define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
 
@@ -115,15 +119,46 @@ void Error_Handler(void);
 /* USER CODE BEGIN 0 */
 void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *hrtc)
 {
-	printf("ALARM\n");
 	HAL_RTC_DeactivateAlarm(hrtc, RTC_ALARM_A);
+}
 
-//	RTC_TimeTypeDef time;
-//	if (HAL_RTC_GetTime(hrtc, &time, RTC_FORMAT_BIN) == HAL_OK) {
-//		printf("HAL_RTC_AlarmAEventCallback [ %d : %d : %d ]\n", time.Hours, time.Minutes, time.Seconds);
-//	} else {
-//		printf("Error: HAL_RTC_GetTime HAL_RTC_AlarmAEventCallback \n");
-//	}
+uint32_t RTC_To_Timestamp(RTC_TimeTypeDef *time) {
+	/* Convert time in seconds */
+	return (uint32_t)(((uint32_t)time->Hours * 3600) +
+			((uint32_t)time->Minutes * 60) +
+			((uint32_t)time->Seconds));
+}
+
+void Timestamp_To_RTC(uint32_t timestamp, RTC_TimeTypeDef *time) {
+	/* Fill the structure fields with the read parameters */
+	time->Hours = timestamp / 3600;
+	time->Minutes  = (uint8_t)((timestamp % 3600) / 60);
+	time->Seconds  = (uint8_t)((timestamp % 3600) % 60);
+}
+
+uint32_t RTC_GetTimestamp() {
+	RTC_TimeTypeDef time;
+	if (HAL_RTC_GetTime(&hrtc, &time, RTC_FORMAT_BIN) != HAL_OK) {
+		return 0;
+	}
+
+	return RTC_To_Timestamp(&time);
+}
+
+void sleep(uint32_t delay) {
+
+	RTC_AlarmTypeDef alarm;
+	alarm.Alarm = RTC_ALARM_A;
+
+	Timestamp_To_RTC(RTC_GetTimestamp() + delay, &alarm.AlarmTime);
+
+	if (HAL_RTC_SetAlarm_IT(&hrtc, &alarm, FORMAT_BIN) == HAL_OK) {
+		HAL_SuspendTick();
+		HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+		HAL_ResumeTick();
+	} else {
+		HAL_Delay(delay);
+	}
 }
 
 /* USER CODE END 0 */
@@ -153,48 +188,6 @@ int main(void)
   MX_RTC_Init();
 
   /* USER CODE BEGIN 2 */
-
-	/**
-	* Test
-	*/
-	uint32_t ts = 0;
-	while (1) {
-		printf("> %lu \n", HAL_GetTick());
-
-		RTC_TimeTypeDef time;
-		if (HAL_RTC_GetTime(&hrtc, &time, RTC_FORMAT_BIN) == HAL_OK) {
-			printf("HAL_RTC_GetTime BIN [ %d : %d : %d ]\n", time.Hours, time.Minutes, time.Seconds);
-		} else {
-			printf("Error: HAL_RTC_GetTime \n");
-		}
-
-		if ((float) ts - HAL_GetTick() <= 0.0) {
-			RTC_AlarmTypeDef sAlarm;
-			sAlarm.AlarmTime.Hours = time.Hours;
-			sAlarm.AlarmTime.Minutes = time.Minutes;
-			sAlarm.AlarmTime.Seconds = time.Seconds + 3;
-
-			sAlarm.Alarm = RTC_ALARM_A;
-			if (HAL_RTC_SetAlarm_IT(&hrtc, &sAlarm, FORMAT_BIN) == HAL_OK) {
-				printf("Alarm Set\n");
-			}
-//			if (HAL_RTC_SetAlarm(&hrtc, &sAlarm, FORMAT_BIN) == HAL_OK) {
-//				printf("Alarm Set\n");
-//			}
-
-			ts = HAL_GetTick() + 10000;
-		}
-
-//		if (HAL_RTC_GetTime(&hrtc, &time, RTC_FORMAT_BCD) == HAL_OK) {
-//			printf("HAL_RTC_GetTime BCD [ %d : %d : %d ]\n", time.Hours, time.Minutes, time.Seconds);
-//		} else {
-//			printf("Error: HAL_RTC_GetTime \n");
-//		}
-
-		HAL_Delay(1000);
-	}
-
-
 	/**
 	* SSD1306
 	*/
@@ -319,15 +312,16 @@ int main(void)
 
 
 	char buffer[BUFF_LEN] = {};
-	uint32_t timestamp = 0;
-	uint32_t timeout = 10000;
-	int fl = 1;
+	uint32_t screen_timestamp = RTC_GetTimestamp();
+	uint32_t screen_action_delay = SHOW_SCREEN_DELAY;
+	int screen_show_flag = 1;
 
   while (1)
   {
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
+//    printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
 
   /**
    * Update sensors
@@ -349,23 +343,24 @@ int main(void)
 		elog("MHT19 get gas concentration failed");
 	}
 
-	if (HAL_GetTick() - timestamp > timeout) {
-		if (fl) {
-			fl = 0;
-			timeout = 15000;
-			timestamp = HAL_GetTick();
+	uint32_t timestamp = RTC_GetTimestamp();
+	if ((timestamp - screen_timestamp > screen_action_delay) || (screen_timestamp > timestamp)) {
+		if (screen_show_flag) {
+			screen_show_flag = 0;
+			screen_action_delay = HIDE_SCREEN_DELAY;
 
 			SSD1306_OFF();
 		} else {
-			fl = 1;
-			timeout = 5000;
-			timestamp = HAL_GetTick();
+			screen_show_flag = 1;
+			screen_action_delay = SHOW_SCREEN_DELAY;
 
 			SSD1306_ON();
 		}
+
+		screen_timestamp = RTC_GetTimestamp();
 	}
 
-	if (fl) {
+	if (screen_show_flag) {
 		/**
 		 * Update screen
 		 */
@@ -396,7 +391,8 @@ int main(void)
 		SSD1306_UpdateScreen();
 	}
 
-	HAL_Delay(2000);
+//	printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
+	sleep(MAIN_LOOP_DELAY);
   }
   /* USER CODE END 3 */
 
