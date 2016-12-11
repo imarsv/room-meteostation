@@ -33,6 +33,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "stm32f1xx_hal.h"
+#include "adc.h"
 #include "dma.h"
 #include "i2c.h"
 #include "iwdg.h"
@@ -63,11 +64,16 @@
 
 #define NELEMS(x)  (sizeof(x) / sizeof((x)[0]))
 
-#define BUFF_LEN		(32)
+#define BUFF_LEN          (32)
 
 #define MAIN_LOOP_DELAY   (2)
 #define SHOW_SCREEN_DELAY (5)
 #define HIDE_SCREEN_DELAY (20)
+
+// Max ADC value ~ voltage
+#define ADC_TO_VOLTAGE_BASE (4.95f)
+#define BATTERY_MAX_VOLTAGE (4.1f)
+#define BATTERY_MIN_VOLTAGE (2.8f)
 
 // Converts degrees to radians.
 #define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
@@ -76,7 +82,15 @@
 #define radiansToDegrees(angleRadians) (angleRadians * 180.0 / M_PI)
 
 struct bmp280_t BMP280;
-s8 I2C_routine(void);
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+void Error_Handler(void);
+
+/* USER CODE BEGIN PFP */
+/* Private function prototypes -----------------------------------------------*/
 
 /*	\Brief: The function is used as I2C bus read
  *	\Return : Status of the I2C read
@@ -105,15 +119,6 @@ s8 I2C_routine(void);
  *	\param : delay in ms
 */
 void BMP280_delay_msek(u32 msek);
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-void Error_Handler(void);
-
-/* USER CODE BEGIN PFP */
-/* Private function prototypes -----------------------------------------------*/
 
 /* USER CODE END PFP */
 
@@ -147,7 +152,6 @@ uint32_t RTC_GetTimestamp() {
 }
 
 void sleep(uint32_t delay) {
-
 	RTC_AlarmTypeDef alarm;
 	alarm.Alarm = RTC_ALARM_A;
 
@@ -161,6 +165,44 @@ void sleep(uint32_t delay) {
 		HAL_Delay(delay * 1000);
 	}
 }
+
+float getBatteryVoltage() {
+
+	if (HAL_ADC_Start(&hadc1) != HAL_OK) {
+		elog("ADC start fail");
+
+		return 0.0;
+	}
+
+	if (HAL_ADC_PollForConversion(&hadc1, 100) != HAL_OK) {
+		elog("ADC poll for conversion fail");
+	}
+
+	uint32_t value = HAL_ADC_GetValue(&hadc1);
+
+	if (HAL_ADC_Stop(&hadc1) != HAL_OK) {
+		elog("ADC stop fail");
+	}
+
+	// (0 to 4095) 0x00 ... 0x0FFF
+//	printf("ADC1: (0 to 4095)  %lu \n", value);
+
+	return (float) ADC_TO_VOLTAGE_BASE * value / 0x0FFF;
+}
+
+int getBatteryCharge(float voltage) {
+
+	int charge = rintf((voltage - BATTERY_MIN_VOLTAGE) * 100.0f / (BATTERY_MAX_VOLTAGE - BATTERY_MIN_VOLTAGE));
+
+	if (charge > 100) {
+		charge = 100;
+	} else if (charge < 0) {
+		charge = 0;
+	}
+
+	return charge;
+}
+
 
 /* USER CODE END 0 */
 
@@ -188,8 +230,17 @@ int main(void)
   MX_USART2_UART_Init();
   MX_RTC_Init();
   MX_IWDG_Init();
+  MX_ADC1_Init();
 
   /* USER CODE BEGIN 2 */
+
+	/**
+	* ADC (battery)
+	*/
+	if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) {
+		elog("ADC calibration fail");
+	}
+
 	/**
 	* SSD1306
 	*/
@@ -293,6 +344,17 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
+	/**
+	 * For battery voltage calibration
+	 */
+//	while(1) {
+//		float voltage = getBatteryVoltage();
+//
+//		printf("Battery voltage: %1.2fv \n", voltage);
+//
+//	    HAL_Delay(200);
+//	}
 
 	/**
 	 * Logo
@@ -441,8 +503,9 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC|RCC_PERIPHCLK_ADC;
   PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_HSE_DIV128;
+  PeriphClkInit.AdcClockSelection = RCC_ADCPCLK2_DIV8;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
