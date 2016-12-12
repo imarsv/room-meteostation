@@ -10,4 +10,8 @@
 
 extern uint8_t logo[];
 
+extern uint8_t battery[];
+
+extern uint8_t battery_point[];
+
 #endif /* SSD1306_IMAGES_H_ */

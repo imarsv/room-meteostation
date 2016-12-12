@@ -1,9 +1,11 @@
 #MicroXplorer Configuration settings - do not modify
 ADC1.ContinuousConvMode=DISABLE
 ADC1.DataAlign=ADC_DATAALIGN_RIGHT
+ADC1.DiscontinuousConvMode=DISABLE
 ADC1.EnableRegularConversion=DISABLE
-ADC1.IPParameters=master,InjNumberOfConversion,EnableRegularConversion,ContinuousConvMode,DataAlign
+ADC1.IPParameters=master,InjNumberOfConversion,EnableRegularConversion,ContinuousConvMode,DataAlign,ScanConvMode,DiscontinuousConvMode
 ADC1.InjNumberOfConversion=0
+ADC1.ScanConvMode=ADC_SCAN_DISABLE
 ADC1.master=1
 Dma.I2C1_TX.0.Direction=DMA_MEMORY_TO_PERIPH
 Dma.I2C1_TX.0.Instance=DMA1_Channel6

@@ -481,7 +481,7 @@ void ssd1306_image(uint8_t *img, uint8_t frame, uint8_t x, uint8_t y)
 	for (i = 0; i < img[1]; i++) {
 		for (j = 0; j < img[0]; j++) {
 
-			SSD1306_DrawPixel(x + j, (y + i), (uint8_t) (img[b/8 + 5 + start] >> (b%8)) & 1);
+			SSD1306_DrawPixel(x + j, y + i, (uint8_t) (img[b/8 + 5 + start] >> (b%8)) & 1);
 			b++;
 		}
 	}

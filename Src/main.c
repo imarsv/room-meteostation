@@ -67,9 +67,10 @@
 
 #define BUFF_LEN          (32)
 
-#define MAIN_LOOP_DELAY   (2)
-#define SHOW_SCREEN_DELAY (5)
-#define HIDE_SCREEN_DELAY (20)
+#define MAIN_LOOP_DELAY           (2)
+#define SHOW_MEASUREMENTS_DELAY   (6)
+#define SHOW_BATTERY_STATUS_DELAY (2)
+#define HIDE_SCREEN_DELAY         (20)
 
 // Max ADC value ~ voltage
 #define ADC_TO_VOLTAGE_BASE (4.95f)
@@ -77,8 +78,7 @@
 #define BATTERY_MIN_VOLTAGE (2.8f)
 
 // Segments
-#define LED_WIDTH         (128)
-#define LED_SEGMENT_WIDTH (LED_WIDTH / 2)
+#define LED_SEGMENT_WIDTH (SSD1306_WIDTH / 2)
 
 // Converts degrees to radians.
 #define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
@@ -87,6 +87,8 @@
 #define radiansToDegrees(angleRadians) (angleRadians * 180.0 / M_PI)
 
 struct bmp280_t BMP280;
+
+char buffer[BUFF_LEN] = {};
 
 /* USER CODE END PV */
 
@@ -208,6 +210,69 @@ int getBatteryCharge(float voltage) {
 	return charge;
 }
 
+void showBattaerCharge(int charge) {
+	SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+	ssd1306_image(battery, 0, 0, 0);
+
+	for (int i = 0; i < charge / 10; i++) {
+		ssd1306_image(battery_point, 0, 16 + i * 9, 13);
+	}
+
+	snprintf(buffer, BUFF_LEN, "%d%%", charge);
+	int messageWidth = strlen(buffer) * Font_10x16.FontWidth;
+
+	int shiftX = (SSD1306_WIDTH - messageWidth * 1.2) / 2;
+	int shiftY = (SSD1306_HEIGHT - Font_10x16.FontHeight * 1.2) / 2;
+	SSD1306_DrawFilledRectangle(shiftX, shiftY,
+			messageWidth * 1.2, Font_10x16.FontHeight * 1.2, SSD1306_COLOR_BLACK);
+
+	shiftX = (SSD1306_WIDTH - messageWidth) / 2;
+	shiftY = (SSD1306_HEIGHT - Font_10x16.FontHeight) / 2;
+	SSD1306_GotoXY(shiftX, shiftY);
+	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
+
+	SSD1306_UpdateScreen();
+}
+
+void showMeasurements(float temperature, float humidity, float pressure, uint16_t co2_ppm) {
+	SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+	SSD1306_GotoXY(0, Font_7x10.FontHeight * 0);
+	SSD1306_Puts("   темп    волог", &Font_7x10, SSD1306_COLOR_WHITE);
+
+	snprintf(buffer, BUFF_LEN, "%.1f%cС", temperature, 176);
+	int shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
+	SSD1306_GotoXY(shift, Font_7x10.FontHeight * 1 + 3);
+	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
+
+	snprintf(buffer, BUFF_LEN, "%.1f%%", humidity);
+	shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
+	SSD1306_GotoXY(shift + LED_SEGMENT_WIDTH, Font_7x10.FontHeight * 1 + 3);
+	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
+
+
+
+	char *header1 = "   тиск   CO";
+	char *header2 = " ppm";
+	SSD1306_GotoXY(0, Font_7x10.FontHeight * 3 + 3);
+	SSD1306_Puts(header1, &Font_7x10, SSD1306_COLOR_WHITE);
+	SSD1306_Puts(header2, &Font_7x10, SSD1306_COLOR_WHITE);
+	SSD1306_GotoXY(Font_7x10.FontWidth * strlen(header1), Font_7x10.FontHeight * 3 + Font_4x6.FontHeight / 2 + 3);
+	SSD1306_Puts("2 ", &Font_4x6, SSD1306_COLOR_WHITE);
+
+	snprintf(buffer, BUFF_LEN, "%.1f", ((float) pressure * 760 / 101325));
+	shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
+	SSD1306_GotoXY(shift, Font_7x10.FontHeight * 4 + 6);
+	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
+
+	snprintf(buffer, BUFF_LEN, "%d", co2_ppm);
+	shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
+	SSD1306_GotoXY(shift + LED_SEGMENT_WIDTH, Font_7x10.FontHeight * 4 + 6);
+	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
+
+	SSD1306_UpdateScreen();
+}
 
 /* USER CODE END 0 */
 
@@ -364,6 +429,7 @@ int main(void)
 	/**
 	 * Logo
 	 */
+	SSD1306_Fill(SSD1306_COLOR_BLACK);
 	ssd1306_image(logo, 0, 0, 0);
 	SSD1306_UpdateScreen();
 
@@ -375,10 +441,10 @@ int main(void)
 	HAL_IWDG_Start(&hiwdg);
 
 
-	char buffer[BUFF_LEN] = {};
 	uint32_t screen_timestamp = RTC_GetTimestamp();
-	uint32_t screen_action_delay = SHOW_SCREEN_DELAY;
-	int screen_show_flag = 1;
+	uint32_t screen_action_delay = SHOW_MEASUREMENTS_DELAY;
+	int show_measurements = 1;
+	int show_battery_charge = 0;
 
   while (1)
   {
@@ -409,14 +475,20 @@ int main(void)
 
 	uint32_t timestamp = RTC_GetTimestamp();
 	if ((timestamp - screen_timestamp > screen_action_delay) || (screen_timestamp > timestamp)) {
-		if (screen_show_flag) {
-			screen_show_flag = 0;
+		if (show_measurements) {
+			show_measurements = 0;
+
+			show_battery_charge = 1;
+			screen_action_delay = SHOW_BATTERY_STATUS_DELAY;
+		} else if (show_battery_charge) {
+			show_battery_charge = 0;
+
 			screen_action_delay = HIDE_SCREEN_DELAY;
 
 			SSD1306_OFF();
 		} else {
-			screen_show_flag = 1;
-			screen_action_delay = SHOW_SCREEN_DELAY;
+			show_measurements = 1;
+			screen_action_delay = SHOW_MEASUREMENTS_DELAY;
 
 			SSD1306_ON();
 		}
@@ -424,48 +496,10 @@ int main(void)
 		screen_timestamp = RTC_GetTimestamp();
 	}
 
-	if (screen_show_flag) {
-		/**
-		 * Update screen
-		 */
-		int shift = 0;
-
-		SSD1306_Fill(SSD1306_COLOR_BLACK);
-
-		SSD1306_GotoXY(0, Font_7x10.FontHeight * 0);
-		SSD1306_Puts("   темп    волог", &Font_7x10, SSD1306_COLOR_WHITE);
-
-		snprintf(buffer, BUFF_LEN, "%.1f%cС", temperature, 176);
-		shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
-		SSD1306_GotoXY(shift, Font_7x10.FontHeight * 1 + 3);
-		SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
-
-		snprintf(buffer, BUFF_LEN, "%.1f%%", humidity);
-		shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
-		SSD1306_GotoXY(shift + LED_SEGMENT_WIDTH, Font_7x10.FontHeight * 1 + 3);
-		SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
-
-
-
-		char *header1 = "   тиск   CO";
-		char *header2 = " ppm";
-		SSD1306_GotoXY(0, Font_7x10.FontHeight * 3 + 3);
-		SSD1306_Puts(header1, &Font_7x10, SSD1306_COLOR_WHITE);
-		SSD1306_Puts(header2, &Font_7x10, SSD1306_COLOR_WHITE);
-		SSD1306_GotoXY(Font_7x10.FontWidth * strlen(header1), Font_7x10.FontHeight * 3 + Font_4x6.FontHeight / 2 + 3);
-		SSD1306_Puts("2 ", &Font_4x6, SSD1306_COLOR_WHITE);
-
-		snprintf(buffer, BUFF_LEN, "%.1f", ((float) pressure * 760 / 101325));
-		shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
-		SSD1306_GotoXY(shift, Font_7x10.FontHeight * 4 + 6);
-		SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
-
-		snprintf(buffer, BUFF_LEN, "%d", co2_ppm);
-		shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
-		SSD1306_GotoXY(shift + LED_SEGMENT_WIDTH, Font_7x10.FontHeight * 4 + 6);
-		SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
-
-		SSD1306_UpdateScreen();
+	if (show_measurements) {
+		showMeasurements(temperature, humidity, pressure, co2_ppm);
+	} else if (show_battery_charge) {
+		showBattaerCharge(getBatteryCharge(getBatteryVoltage()));
 	}
 
 //	printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
