@@ -43,6 +43,8 @@
 
 #define BATTERY_Pin GPIO_PIN_0
 #define BATTERY_GPIO_Port GPIOA
+#define AUDIO_Pin GPIO_PIN_1
+#define AUDIO_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

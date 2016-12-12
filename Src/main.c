@@ -89,6 +89,7 @@
 struct bmp280_t BMP280;
 
 char buffer[BUFF_LEN] = {};
+int audio_activation = 0;
 
 /* USER CODE END PV */
 
@@ -130,6 +131,12 @@ void BMP280_delay_msek(u32 msek);
 /* USER CODE END PFP */
 
 /* USER CODE BEGIN 0 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+	if(GPIO_Pin == AUDIO_Pin){
+		audio_activation++;
+	}
+}
+
 void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *hrtc)
 {
 	HAL_RTC_DeactivateAlarm(hrtc, RTC_ALARM_A);
@@ -503,9 +510,15 @@ int main(void)
 	}
 
 //	printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
+	audio_activation = 0;
+
 	HAL_IWDG_Refresh(&hiwdg);
 	sleep(MAIN_LOOP_DELAY);
 	HAL_IWDG_Refresh(&hiwdg);
+
+	if ((audio_activation > 0) && !(show_measurements || show_battery_charge)) {
+		screen_timestamp = 0;
+	}
   }
   /* USER CODE END 3 */
 
