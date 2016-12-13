@@ -58,18 +58,30 @@
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 #define slog(msg) \
-		{ printf("info: %s\n", msg); }
+		{ /*printf("info: %s\n", msg);*/ }
 
 #define elog(msg) \
 		{ printf("error: %s\n", msg); }
 
 #define NELEMS(x)  (sizeof(x) / sizeof((x)[0]))
+#define MIN(a,b)   (((a)<(b))?(a):(b))
+#define MAX(a,b)   (((a)>(b))?(a):(b))
+#define PA2mmHG(p) (((float) (p) * 760 / 101325))
 
 #define BUFF_LEN          (32)
 
 #define MAIN_LOOP_DELAY           (2)
-#define SHOW_MEASUREMENTS_DELAY   (6)
+
+#define SHOW_LOGO_DELAY           (4)
+#define SHOW_MEASUREMENTS_DELAY   (8)
 #define SHOW_BATTERY_STATUS_DELAY (2)
+
+#define MEASUREMENTS_ACTIVE_DELAY (2)
+#define MEASUREMENTS_SLEEP_DELAY  (20)
+
+#define STATE_ACTIVE_DELAY        (30)
+#define STATE_SLEEP_DELAY         (10*60)
+
 #define HIDE_SCREEN_DELAY         (20)
 
 // Max ADC value ~ voltage
@@ -80,16 +92,14 @@
 // Segments
 #define LED_SEGMENT_WIDTH (SSD1306_WIDTH / 2)
 
-// Converts degrees to radians.
-#define degreesToRadians(angleDegrees) (angleDegrees * M_PI / 180.0)
-
-// Converts radians to degrees.
-#define radiansToDegrees(angleRadians) (angleRadians * 180.0 / M_PI)
-
 struct bmp280_t BMP280;
 
 char buffer[BUFF_LEN] = {};
+
 int audio_activation = 0;
+
+typedef enum { ACTIVE, SLEEP } State;
+typedef enum { LOGO, MEASUREMENTS, BATTERY, HIDE } Screen;
 
 /* USER CODE END PV */
 
@@ -169,7 +179,7 @@ void sleep(uint32_t delay) {
 	RTC_AlarmTypeDef alarm;
 	alarm.Alarm = RTC_ALARM_A;
 
-	Timestamp_To_RTC(RTC_GetTimestamp() + delay, &alarm.AlarmTime);
+	Timestamp_To_RTC(RTC_GetTimestamp() + delay - 1, &alarm.AlarmTime);
 
 	if (HAL_RTC_SetAlarm_IT(&hrtc, &alarm, FORMAT_BIN) == HAL_OK) {
 		HAL_SuspendTick();
@@ -217,7 +227,19 @@ int getBatteryCharge(float voltage) {
 	return charge;
 }
 
-void showBattaerCharge(int charge) {
+void showLogo() {
+	slog("Show logo");
+
+	SSD1306_Fill(SSD1306_COLOR_BLACK);
+
+	ssd1306_image(logo, 0, 0, 0);
+
+	SSD1306_UpdateScreen();
+}
+
+void showBatteryCharge(int charge) {
+	slog("Show battery charge");
+
 	SSD1306_Fill(SSD1306_COLOR_BLACK);
 
 	ssd1306_image(battery, 0, 0, 0);
@@ -243,6 +265,8 @@ void showBattaerCharge(int charge) {
 }
 
 void showMeasurements(float temperature, float humidity, float pressure, uint16_t co2_ppm) {
+	slog("Show measurements");
+
 	SSD1306_Fill(SSD1306_COLOR_BLACK);
 
 	SSD1306_GotoXY(0, Font_7x10.FontHeight * 0);
@@ -268,7 +292,7 @@ void showMeasurements(float temperature, float humidity, float pressure, uint16_
 	SSD1306_GotoXY(Font_7x10.FontWidth * strlen(header1), Font_7x10.FontHeight * 3 + Font_4x6.FontHeight / 2 + 3);
 	SSD1306_Puts("2 ", &Font_4x6, SSD1306_COLOR_WHITE);
 
-	snprintf(buffer, BUFF_LEN, "%.1f", ((float) pressure * 760 / 101325));
+	snprintf(buffer, BUFF_LEN, "%.1f", PA2mmHG(pressure));
 	shift = (LED_SEGMENT_WIDTH - strlen(buffer) * Font_10x16.FontWidth) / 2;
 	SSD1306_GotoXY(shift, Font_7x10.FontHeight * 4 + 6);
 	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
@@ -279,6 +303,31 @@ void showMeasurements(float temperature, float humidity, float pressure, uint16_
 	SSD1306_Puts(buffer, &Font_10x16, SSD1306_COLOR_WHITE);
 
 	SSD1306_UpdateScreen();
+}
+
+void updateMeasurements(float *temperature, float *humidity, float *pressure, uint16_t *co2_ppm) {
+	slog("Update measurements");
+
+	if (htu21_temperature(temperature) != 0) {
+		elog("HTU21 read temperature failed");
+	}
+	if (htu21_humidity(humidity) != 0) {
+		elog("HTU21 read humidity failed");
+	}
+
+	s32 temp;
+	if (bmp280_read_uncomp_pressure(&temp) != 0) {
+		elog("BMP280 read uncomp pressure failed");
+	}
+	*pressure = bmp280_compensate_pressure_double(temp);
+
+	if (mhz19_get(co2_ppm) != 0) {
+		elog("MHT19 get gas concentration failed");
+	}
+}
+
+void setScreenState(Screen screen) {
+
 }
 
 /* USER CODE END 0 */
@@ -310,14 +359,6 @@ int main(void)
   MX_ADC1_Init();
 
   /* USER CODE BEGIN 2 */
-
-	/**
-	* ADC (battery)
-	*/
-	if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) {
-		elog("ADC calibration fail");
-	}
-
 	/**
 	* SSD1306
 	*/
@@ -333,29 +374,10 @@ int main(void)
 		elog("HTU21 reset fail");
 	}
 
-// Demo
-//	if (htu21_temperature(&temperature) != 0) {
-//		elog("HTU21 read temperature failed");
-//	}
-//	printf("temperature:% 3.2f \n", temperature);
-//
-//	if (htu21_humidity(&humidity) != 0) {
-//		elog("HTU21 read humidity failed");
-//	}
-//	printf("   humidity:% 3.2f \n", humidity);
-//
-//	uint8_t htu21Status = 0x00;
-//	if (htu21_status(&htu21Status) != 0) {
-//		elog("HTU21 read status failed");
-//	}
-//	printf("     status: 0x%02X \n", htu21Status);
-	//*/
-
-
 	/**
 	* BMP280
 	*/
-	double pressure = 0.0f;
+	float pressure = 0.0f;
 
 	I2C_routine();
 
@@ -392,11 +414,6 @@ int main(void)
 	}
 
 	HAL_Delay(100);
-	s32 temp;
-	if (bmp280_read_uncomp_pressure(&temp) != 0) {
-		elog("BMP280 read uncomp pressure failed");
-	}
-	pressure = bmp280_compensate_pressure_double(temp);
 
 	if (bmp280_set_work_mode(BMP280_STANDARD_RESOLUTION_MODE) != 0) {
 		elog("BMP280 STANDARD_RESOLUTION work mode failed");
@@ -407,20 +424,14 @@ int main(void)
 	 */
 	uint16_t co2_ppm = 0;
 
-//	while(1) {
-//		if (mhz19_get(&co2_ppm) != 0) {
-//			elog("MHT19 get gas concentration failed");
-//		}
-//
-//		printf("CO2 %dppm\n", co2_ppm);
-//
-//		HAL_Delay(5000);
-//	}
+	/**
+	* ADC (battery)
+	*/
+	if (HAL_ADCEx_Calibration_Start(&hadc1) != HAL_OK) {
+		elog("ADC calibration fail");
+	}
 
-  /* USER CODE END 2 */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
+	printf("Battery voltage: %1.2fv \n", getBatteryVoltage());
 
 	/**
 	 * For battery voltage calibration
@@ -430,95 +441,169 @@ int main(void)
 //
 //		printf("Battery voltage: %1.2fv \n", voltage);
 //
-//	    HAL_Delay(200);
+//		HAL_Delay(200);
 //	}
-
-	/**
-	 * Logo
-	 */
-	SSD1306_Fill(SSD1306_COLOR_BLACK);
-	ssd1306_image(logo, 0, 0, 0);
-	SSD1306_UpdateScreen();
-
-	HAL_Delay(3000);
 
 	/**
 	 * Watch DOG
 	 */
 	HAL_IWDG_Start(&hiwdg);
 
+  /* USER CODE END 2 */
 
-	uint32_t screen_timestamp = RTC_GetTimestamp();
-	uint32_t screen_action_delay = SHOW_MEASUREMENTS_DELAY;
-	int show_measurements = 1;
-	int show_battery_charge = 0;
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+
+	State state = ACTIVE;
+	Screen screen = LOGO;
+
+	uint32_t nextScreenUpdateTimestamp = RTC_GetTimestamp() + SHOW_LOGO_DELAY;
+	uint32_t nextMeasurementTimestamp = 0;
+	uint32_t nextStateUpdateTimestamp = RTC_GetTimestamp() + STATE_ACTIVE_DELAY;
+
+	int screen_is_on = 0;
+	audio_activation = 0;
 
   while (1)
   {
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-//    printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
+//    printf("\n[%d] %lu %lu\n", __LINE__, HAL_GetTick(), RTC_GetTimestamp());
 
-  /**
-   * Update sensors
-   */
-	if (htu21_temperature(&temperature) != 0) {
-		elog("HTU21 read temperature failed");
-	}
-	if (htu21_humidity(&humidity) != 0) {
-		elog("HTU21 read humidity failed");
-	}
+    uint32_t timestamp = RTC_GetTimestamp();
 
-	s32 temp;
-	if (bmp280_read_uncomp_pressure(&temp) != 0) {
-		elog("BMP280 read uncomp pressure failed");
-	}
-	pressure = bmp280_compensate_pressure_double(temp);
+    /**
+     * State
+     */
+	if (audio_activation) {
+		slog("Audio activation");
 
-	if (mhz19_get(&co2_ppm) != 0) {
-		elog("MHT19 get gas concentration failed");
-	}
+		audio_activation = 0;
 
-	uint32_t timestamp = RTC_GetTimestamp();
-	if ((timestamp - screen_timestamp > screen_action_delay) || (screen_timestamp > timestamp)) {
-		if (show_measurements) {
-			show_measurements = 0;
+		state = ACTIVE;
+		nextStateUpdateTimestamp = timestamp + STATE_ACTIVE_DELAY;
 
-			show_battery_charge = 1;
-			screen_action_delay = SHOW_BATTERY_STATUS_DELAY;
-		} else if (show_battery_charge) {
-			show_battery_charge = 0;
-
-			screen_action_delay = HIDE_SCREEN_DELAY;
-
-			SSD1306_OFF();
-		} else {
-			show_measurements = 1;
-			screen_action_delay = SHOW_MEASUREMENTS_DELAY;
-
-			SSD1306_ON();
+		if (screen == HIDE) {
+			screen = MEASUREMENTS;
+			nextScreenUpdateTimestamp = timestamp + SHOW_MEASUREMENTS_DELAY;
+			nextMeasurementTimestamp = 0;
 		}
-
-		screen_timestamp = RTC_GetTimestamp();
 	}
 
-	if (show_measurements) {
+    if (timestamp >= nextStateUpdateTimestamp) {
+		switch(state) {
+		case ACTIVE:
+			slog("Time to go sleep");
+
+			state = SLEEP;
+			screen = HIDE;
+			nextStateUpdateTimestamp = timestamp + STATE_SLEEP_DELAY;
+			break;
+
+		case SLEEP:
+			slog("Time to show me");
+
+			state = ACTIVE;
+			nextStateUpdateTimestamp = timestamp + STATE_ACTIVE_DELAY;
+
+			if (screen == HIDE) {
+				screen = MEASUREMENTS;
+				nextScreenUpdateTimestamp = timestamp + SHOW_MEASUREMENTS_DELAY;
+			}
+			break;
+		}
+    }
+
+    /**
+     * Measurements
+     */
+    if (timestamp >= nextMeasurementTimestamp) {
+    	updateMeasurements(&temperature, &humidity, &pressure, &co2_ppm);
+
+    	printf("%lu;%.1f;%.1f;%.1f;%d;\n",
+    			timestamp, temperature, humidity, PA2mmHG(pressure), co2_ppm);
+
+		switch(state) {
+		case ACTIVE:
+			nextMeasurementTimestamp = timestamp + MEASUREMENTS_ACTIVE_DELAY;
+			break;
+
+		case SLEEP:
+			nextMeasurementTimestamp = timestamp + MEASUREMENTS_SLEEP_DELAY;
+			break;
+		}
+    }
+
+    /**
+     * Screen
+     */
+    if (timestamp >= nextScreenUpdateTimestamp) {
+    	switch (screen) {
+    	case LOGO:
+    		screen = MEASUREMENTS;
+    		nextScreenUpdateTimestamp = timestamp + SHOW_MEASUREMENTS_DELAY;
+    		break;
+
+    	case MEASUREMENTS:
+    		screen = BATTERY;
+    		nextScreenUpdateTimestamp = timestamp + SHOW_BATTERY_STATUS_DELAY;
+    		break;
+
+    	case BATTERY:
+    		screen = MEASUREMENTS;
+    		nextScreenUpdateTimestamp = timestamp + SHOW_MEASUREMENTS_DELAY;
+    		break;
+
+    	case HIDE:
+    		nextScreenUpdateTimestamp = UINT32_MAX;
+    		break;
+    	}
+    }
+
+	switch (screen) {
+	case LOGO:
+	case MEASUREMENTS:
+	case BATTERY:
+		if (!screen_is_on) {
+			SSD1306_ON();
+			screen_is_on = 1;
+		}
+		break;
+
+	case HIDE:
+		if (screen_is_on) {
+			SSD1306_OFF();
+			screen_is_on = 0;
+		}
+		break;
+	}
+
+	switch (screen) {
+	case LOGO:
+		showLogo();
+		break;
+
+	case MEASUREMENTS:
 		showMeasurements(temperature, humidity, pressure, co2_ppm);
-	} else if (show_battery_charge) {
-		showBattaerCharge(getBatteryCharge(getBatteryVoltage()));
+		break;
+
+	case BATTERY:
+		showBatteryCharge(getBatteryCharge(getBatteryVoltage()));
+		break;
+
+	default:
+		break;
 	}
 
-//	printf("[%d] %lu\n", __LINE__, RTC_GetTimestamp());
-	audio_activation = 0;
+//	printf("[%d] M:%lu (%lu) S:%lu (%lu)  T:%lu  Sleep: (%lu) \n", __LINE__,
+//			nextMeasurementTimestamp, nextMeasurementTimestamp - timestamp,
+//			nextScreenUpdateTimestamp, nextScreenUpdateTimestamp - timestamp,
+//			timestamp, MIN(nextMeasurementTimestamp, nextScreenUpdateTimestamp) - timestamp );
 
 	HAL_IWDG_Refresh(&hiwdg);
-	sleep(MAIN_LOOP_DELAY);
+	sleep( (MIN(nextMeasurementTimestamp, nextScreenUpdateTimestamp) - timestamp) );
 	HAL_IWDG_Refresh(&hiwdg);
-
-	if ((audio_activation > 0) && !(show_measurements || show_battery_charge)) {
-		screen_timestamp = 0;
-	}
   }
   /* USER CODE END 3 */
 

@@ -53,7 +53,7 @@ SDA        |PB7          |Serial data line
 #include "string.h"
 
 #define slog(msg) \
-		{ printf("info: %s\n", msg); }
+		{ /* printf("info: %s\n", msg); */ }
 
 #define elog(msg) \
 		{ printf("error: %s\n", msg); }
